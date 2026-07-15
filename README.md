@@ -1,4 +1,4 @@
-# Balloon Shooting Game — FF12, Group 1
+# Balloon Shooting Game — Group 1
 
 An 8086 assembly game built in EMU8086, where the player moves a shooter up/down and pops balloons drifting in from the right before too many get past.
 
