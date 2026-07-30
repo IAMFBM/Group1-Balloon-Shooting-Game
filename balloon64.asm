@@ -7,12 +7,15 @@ extrn WriteConsoleOutputA:proc
 extrn Sleep:proc
 extrn GetAsyncKeyState:proc
 extrn ExitProcess:proc
+extrn CreateFileA:proc
+extrn WriteFile:proc
+extrn CloseHandle:proc
 
 .data
     hOut            dq 0
     writeRegion     dw 0, 0, 79, 24 ; Left, Top, Right, Bottom
 
-    ; Game state (64-bit quadwords for easy register loading)
+    ; Game state
     player_x        dq 40
     balloon_x       dq 20
     balloon_y       dq 0
@@ -24,18 +27,30 @@ extrn ExitProcess:proc
     bullet_act      dq 0
     
     game_over       dq 0
+    score           dq 0
+    
+    ; Name Entry State
+    name_entry      dq 0
+    name_len        dq 0
+    user_name       db 10 dup(' ')
 
+    ; Strings
     go_msg          db "GAME OVER! PRESS R TO RETRY OR ESC TO QUIT", 0
+    name_msg        db "NEW HIGH SCORE! ENTER NAME:", 0
+    score_pfx       db "SCORE: ", 0
+    separator       db " - ", 0
+    newline         db 13, 10
+    filename        db "leaderboard.txt", 0
 
 .data?
-    screen_buf      dd 2000 dup(?)  ; 2000 CHAR_INFO structures (4 bytes each)
+    screen_buf      dd 2000 dup(?)
+    score_buf       db 16 dup(?)
+    dummy_bytes     dd ?
 
 .code
 main proc
-    ; 16-byte stack alignment and 32 bytes shadow space for Win64 Calling Convention
     sub rsp, 40
 
-    ; GetStdHandle(STD_OUTPUT_HANDLE = -11)
     mov rcx, -11
     call GetStdHandle
     mov hOut, rax
@@ -47,8 +62,6 @@ game_loop:
     je game_over_state
 
     ; --- NORMAL GAME INPUT ---
-
-    ; Check Left Arrow (VK_LEFT = 0x25)
     mov rcx, 25h
     call GetAsyncKeyState
     test ax, 8000h
@@ -58,7 +71,6 @@ game_loop:
     dec player_x
 not_left:
 
-    ; Check Right Arrow (VK_RIGHT = 0x27)
     mov rcx, 27h
     call GetAsyncKeyState
     test ax, 8000h
@@ -68,7 +80,6 @@ not_left:
     inc player_x
 not_right:
 
-    ; Check Spacebar (VK_SPACE = 0x20)
     mov rcx, 20h
     call GetAsyncKeyState
     test ax, 8000h
@@ -81,7 +92,6 @@ not_right:
     mov qword ptr [bullet_y], 22
 not_space:
 
-    ; Check Esc (VK_ESCAPE = 0x1B)
     mov rcx, 1Bh
     call GetAsyncKeyState
     test ax, 8000h
@@ -94,10 +104,20 @@ not_space:
     jmp render_scene
 
 game_over_state:
-    ; --- GAME OVER INPUT ---
+    ; Are we entering a name?
+    cmp name_entry, 1
+    je do_name_entry
     
-    ; Check 'R' (VK_R = 0x52)
-    mov rcx, 52h
+    ; If score > 0, switch to name entry
+    cmp score, 0
+    jle no_name_entry
+    mov name_entry, 1
+    mov name_len, 0
+    jmp render_scene
+
+no_name_entry:
+    ; Normal Game Over Input
+    mov rcx, 52h ; 'R'
     call GetAsyncKeyState
     test ax, 8000h
     jz check_go_esc
@@ -109,30 +129,106 @@ game_over_state:
     mov qword ptr [balloon_y], 0
     mov qword ptr [balloon_timer], 0
     mov qword ptr [bullet_act], 0
+    mov qword ptr [score], 0
     jmp render_scene
     
 check_go_esc:
-    ; Check Esc
-    mov rcx, 1Bh
+    mov rcx, 1Bh ; Esc
     call GetAsyncKeyState
     test ax, 8000h
     jnz exit_game
     
     ; Draw Game Over text
-    mov rcx, 19      ; X
-    mov rdx, 12      ; Y
-    lea r8, go_msg   ; String
-    mov r9d, 000Ch   ; Red attribute
+    mov rcx, 19
+    mov rdx, 12
+    lea r8, go_msg
+    mov r9d, 000Ch
     call draw_string
+    jmp render_scene
+
+do_name_entry:
+    ; Name Entry Input (A-Z)
+    mov r12, 41h
+check_keys:
+    mov rcx, r12
+    call GetAsyncKeyState
+    test ax, 1 ; Check if pressed since last call
+    jz next_key
+    
+    cmp name_len, 8
+    jge next_key
+    
+    mov r13, name_len
+    lea r14, user_name
+    mov byte ptr [r14 + r13], r12b
+    inc name_len
+next_key:
+    inc r12
+    cmp r12, 5Ah
+    jle check_keys
+
+    ; Check Backspace
+    mov rcx, 08h
+    call GetAsyncKeyState
+    test ax, 1
+    jz no_backspace
+    cmp name_len, 0
+    jle no_backspace
+    dec name_len
+    mov r13, name_len
+    lea r14, user_name
+    mov byte ptr [r14 + r13], ' '
+no_backspace:
+
+    ; Check Enter
+    mov rcx, 0Dh
+    call GetAsyncKeyState
+    test ax, 1
+    jz no_enter
+    call save_score
+    mov name_entry, 0 ; Done entering name
+    mov score, 0
+no_enter:
+
+    ; Draw Name Entry UI
+    mov rcx, 25
+    mov rdx, 10
+    lea r8, name_msg
+    mov r9d, 000Eh
+    call draw_string
+    
+    mov rcx, 35
+    mov rdx, 12
+    lea r8, user_name
+    mov r9d, 000Fh
+    call draw_string
+    
+    jmp render_scene
 
 render_scene:
-    ; Draw Player (Blue '^')
+    ; Draw Score
+    mov rcx, 2
+    mov rdx, 1
+    lea r8, score_pfx
+    mov r9d, 000Ah ; Green
+    call draw_string
+    
+    mov rcx, score
+    lea rdx, score_buf
+    call itoa
+    mov rcx, 9
+    mov rdx, 1
+    mov r8, rax
+    mov r9d, 000Ah
+    call draw_string
+
+    ; Draw Player
     mov rcx, player_x
     mov rdx, 23
     mov r8d, 0009005Eh 
     call draw_char
 
-    ; Draw Balloon (Red 'OOO')
+    ; Draw Balloon
     cmp balloon_act, 1
     jne no_balloon_draw
     mov rcx, balloon_x
@@ -151,7 +247,7 @@ render_scene:
     call draw_char
 no_balloon_draw:
 
-    ; Draw Bullet (Yellow '|')
+    ; Draw Bullet
     cmp bullet_act, 1
     jne no_bullet_draw
     mov rcx, bullet_x
@@ -160,19 +256,17 @@ no_balloon_draw:
     call draw_char
 no_bullet_draw:
 
-    ; Render screen buffer to console
+    ; Render
     mov rcx, hOut
     lea rdx, screen_buf
-    mov r8d, 00190050h  ; Size: X=80 (50h), Y=25 (19h)
-    mov r9d, 0          ; Coord: X=0, Y=0
+    mov r8d, 00190050h
+    mov r9d, 0
     lea rax, writeRegion
     mov qword ptr [rsp+32], rax
     call WriteConsoleOutputA
 
-    ; Frame delay (50ms -> ~20 FPS)
     mov rcx, 50
     call Sleep
-
     jmp game_loop
 
 exit_game:
@@ -181,18 +275,19 @@ exit_game:
     call ExitProcess
 main endp
 
+; --- SUBROUTINES ---
+
 clear_buffer proc
     push rdi
     lea rdi, screen_buf
     mov ecx, 2000
-    mov eax, 00000020h ; Space character with Black background (0000h)
+    mov eax, 00000020h
     rep stosd
     pop rdi
     ret
 clear_buffer endp
 
 draw_char proc
-    ; RCX = X, RDX = Y, R8D = Char/Attr
     imul rax, rdx, 80
     add rax, rcx
     lea r9, screen_buf
@@ -201,29 +296,40 @@ draw_char proc
 draw_char endp
 
 draw_string proc
-    ; RCX = X, RDX = Y, R8 = string pointer, R9D = Attribute
     imul rax, rdx, 80
     add rax, rcx
-    shl rax, 2      ; multiply by 4
+    shl rax, 2
     lea r10, screen_buf
-    add r10, rax    ; R10 points to destination in screen_buf
-    
+    add r10, rax
 ds_loop:
     mov al, byte ptr [r8]
     test al, al
     jz ds_end
-    
-    ; Write Char
     mov byte ptr [r10], al
-    ; Write Attribute
     mov word ptr [r10 + 2], r9w
-    
     inc r8
     add r10, 4
     jmp ds_loop
 ds_end:
     ret
 draw_string endp
+
+itoa proc
+    mov rax, rcx
+    mov r8, 10
+    lea r9, [rdx + 15]
+    mov byte ptr [r9], 0
+itoa_loop:
+    dec r9
+    xor edx, edx
+    div r8
+    add dl, '0'
+    mov byte ptr [r9], dl
+    test rax, rax
+    jnz itoa_loop
+    mov rax, r9
+    ret
+itoa endp
 
 update_balloon proc
     cmp balloon_act, 1
@@ -232,16 +338,14 @@ update_balloon proc
     mov balloon_act, 1
     mov qword ptr [balloon_y], 0
     
-    ; Generate random X using RDTSC
     rdtsc
     xor edx, edx
-    mov ecx, 78 ; 77 is max X (so 3 chars fit on 80 char width)
+    mov ecx, 78
     div ecx
-    mov balloon_x, rdx ; Remainder (0-77) becomes the X coordinate
+    mov balloon_x, rdx
     ret
 
 move_balloon:
-    ; Slow down balloon fall rate (only moves every 3 frames)
     inc qword ptr [balloon_timer]
     cmp qword ptr [balloon_timer], 3
     jl end_update_balloon
@@ -251,9 +355,7 @@ move_balloon:
     cmp qword ptr [balloon_y], 23
     jl end_update_balloon
     
-    ; Balloon reached the bottom! GAME OVER!
     mov qword ptr [game_over], 1
-
 end_update_balloon:
     ret
 update_balloon endp
@@ -287,11 +389,79 @@ check_collision proc
     cmp rax, balloon_y
     jg end_check
 
-    ; Bullet hit balloon!
     mov balloon_act, 0
     mov bullet_act, 0
+    inc score
 end_check:
     ret
 check_collision endp
+
+save_score proc
+    sub rsp, 88
+    
+    lea rcx, filename
+    mov rdx, 4 ; FILE_APPEND_DATA
+    mov r8, 1  ; FILE_SHARE_READ
+    mov r9, 0
+    mov qword ptr [rsp+32], 4 ; OPEN_ALWAYS
+    mov qword ptr [rsp+40], 80h ; FILE_ATTRIBUTE_NORMAL
+    mov qword ptr [rsp+48], 0
+    call CreateFileA
+    
+    cmp rax, -1
+    je save_score_end
+    mov r15, rax ; handle
+    
+    ; Write Name
+    mov rcx, r15
+    lea rdx, user_name
+    mov r8, name_len
+    lea r9, dummy_bytes
+    mov qword ptr [rsp+32], 0
+    call WriteFile
+    
+    ; Write Separator
+    mov rcx, r15
+    lea rdx, separator
+    mov r8, 3
+    lea r9, dummy_bytes
+    mov qword ptr [rsp+32], 0
+    call WriteFile
+    
+    ; Write Score
+    mov rcx, score
+    lea rdx, score_buf
+    call itoa
+    mov rdi, rax
+    
+    mov rcx, 0
+len_loop:
+    cmp byte ptr [rdi + rcx], 0
+    je got_len
+    inc rcx
+    jmp len_loop
+got_len:
+    mov r8, rcx
+    mov rcx, r15
+    mov rdx, rdi
+    lea r9, dummy_bytes
+    mov qword ptr [rsp+32], 0
+    call WriteFile
+    
+    ; Write Newline
+    mov rcx, r15
+    lea rdx, newline
+    mov r8, 2
+    lea r9, dummy_bytes
+    mov qword ptr [rsp+32], 0
+    call WriteFile
+    
+    mov rcx, r15
+    call CloseHandle
+    
+save_score_end:
+    add rsp, 88
+    ret
+save_score endp
 
 end
