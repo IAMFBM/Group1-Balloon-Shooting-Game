@@ -31,6 +31,8 @@ extrn CloseHandle:proc
     
     game_over       dq 0
     score           dq 0
+    level           dq 1
+    balloon_speed   dq 3
     
     ; Name Entry State
     name_entry      dq 0
@@ -43,6 +45,7 @@ extrn CloseHandle:proc
     name_msg        db "NEW HIGH SCORE! ENTER NAME:", 0
     lb_title        db "--- LEADERBOARD ---", 0
     score_pfx       db "SCORE: ", 0
+    level_pfx       db "LEVEL: ", 0
     separator       db " - ", 0
     newline         db 13, 10
     filename        db "leaderboard.txt", 0
@@ -139,6 +142,8 @@ no_name_entry:
     mov qword ptr [balloon_timer], 0
     mov qword ptr [bullet_act], 0
     mov qword ptr [score], 0
+    mov qword ptr [level], 1
+    mov qword ptr [balloon_speed], 3
     jmp render_scene
     
 check_go_esc:
@@ -268,6 +273,22 @@ render_scene:
     mov rdx, 1
     mov r8, rax
     mov r9d, 000Ah
+    call draw_string
+    
+    ; Draw Level
+    mov rcx, 65
+    mov rdx, 1
+    lea r8, level_pfx
+    mov r9d, 000Eh ; Yellow
+    call draw_string
+    
+    mov rcx, level
+    lea rdx, score_buf
+    call itoa
+    mov rcx, 72
+    mov rdx, 1
+    mov r8, rax
+    mov r9d, 000Eh
     call draw_string
 
     ; Draw Player
@@ -446,7 +467,8 @@ update_balloon proc
 
 move_balloon:
     inc qword ptr [balloon_timer]
-    cmp qword ptr [balloon_timer], 3
+    mov rax, qword ptr [balloon_speed]
+    cmp qword ptr [balloon_timer], rax
     jl end_update_balloon
     mov qword ptr [balloon_timer], 0
 
@@ -492,6 +514,23 @@ check_collision proc
     mov balloon_act, 0
     mov bullet_act, 0
     inc score
+    
+    ; Update Level and Speed
+    mov rax, score
+    mov rcx, 5
+    xor rdx, rdx
+    div rcx
+    inc rax
+    mov qword ptr [level], rax
+    
+    ; speed = 4 - level (min 1)
+    mov rcx, 4
+    sub rcx, rax
+    cmp rcx, 1
+    jge set_spd
+    mov rcx, 1
+set_spd:
+    mov qword ptr [balloon_speed], rcx
 end_check:
     ret
 check_collision endp
