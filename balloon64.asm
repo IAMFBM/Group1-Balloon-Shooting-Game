@@ -36,6 +36,7 @@ extrn CloseHandle:proc             ; Closes an open object handle (like a file h
     score           dq 0            ; The player's current score
     level           dq 1            ; The player's current level (increases every 5 score)
     balloon_speed   dq 3            ; Base speed of balloon (lower = faster)
+    player_speed    dq 1            ; Player movement speed
     
     ; Name Entry State Variables (for Leaderboard)
     name_entry      dq 0            ; Flag: 1 if user is currently typing their name for the leaderboard
@@ -90,9 +91,13 @@ game_loop:
     call GetAsyncKeyState
     test ax, 8000h                  ; Check if the most significant bit (0x8000) is set (key is currently held down)
     jz not_left                     ; If not pressed, skip to next check
-    cmp player_x, 0                 ; Prevent moving off the left edge (X < 0)
-    jle not_left
-    dec player_x                    ; Move player left
+    mov rax, qword ptr [player_x]
+    sub rax, qword ptr [player_speed] ; Move player left by speed
+    cmp rax, 0
+    jge set_left
+    mov rax, 0                      ; Clamp to left edge
+set_left:
+    mov qword ptr [player_x], rax
 not_left:
 
     ; Check Right Arrow (Virtual Key 0x27)
@@ -100,9 +105,13 @@ not_left:
     call GetAsyncKeyState
     test ax, 8000h
     jz not_right
-    cmp player_x, 79                ; Prevent moving off the right edge (X > 79)
-    jge not_right
-    inc player_x                    ; Move player right
+    mov rax, qword ptr [player_x]
+    add rax, qword ptr [player_speed] ; Move player right by speed
+    cmp rax, 79
+    jle set_right
+    mov rax, 79                     ; Clamp to right edge
+set_right:
+    mov qword ptr [player_x], rax
 not_right:
 
     ; Check Spacebar (Virtual Key 0x20)
@@ -160,6 +169,7 @@ no_name_entry:
     mov qword ptr [score], 0
     mov qword ptr [level], 1
     mov qword ptr [balloon_speed], 3
+    mov qword ptr [player_speed], 1
     jmp render_scene
     
 check_go_esc:
@@ -572,7 +582,7 @@ check_collision proc
     inc rax
     mov qword ptr [level], rax      ; Update level variable
     
-    ; Calculate Dynamic Speed (Speed = 4 - Level. Minimum 1)
+    ; Calculate Dynamic Balloon Speed (Speed = 4 - Level. Minimum 1)
     mov rcx, 4
     sub rcx, rax
     cmp rcx, 1
@@ -580,6 +590,16 @@ check_collision proc
     mov rcx, 1                      ; Otherwise, clamp Speed to 1 (Fastest)
 set_spd:
     mov qword ptr [balloon_speed], rcx
+
+    ; Calculate Player Speed (Speed = (Level + 1) / 2)
+    mov rax, qword ptr [level]
+    inc rax
+    shr rax, 1                      ; Divide by 2
+    cmp rax, 1
+    jge set_pspd
+    mov rax, 1
+set_pspd:
+    mov qword ptr [player_speed], rax
 
 end_check:
     ret
