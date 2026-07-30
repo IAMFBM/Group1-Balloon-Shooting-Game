@@ -346,6 +346,9 @@ draw_multiline_string proc
     mov r12, rdx ; Current Y
     
 dms_loop:
+    cmp r12, 23
+    jg dms_end ; Prevent vertical buffer overflow
+
     mov al, byte ptr [r8]
     test al, al
     jz dms_end
@@ -354,6 +357,9 @@ dms_loop:
     je skip_char
     cmp al, 10 ; LF
     je next_line
+    
+    cmp r11, 79
+    jg skip_char ; Prevent horizontal buffer overflow
     
     ; Calculate offset
     mov rax, r12
@@ -467,7 +473,10 @@ end_check:
 check_collision endp
 
 save_score proc
-    sub rsp, 88
+    push rbp
+    mov rbp, rsp
+    and rsp, -16
+    sub rsp, 96
     
     lea rcx, filename
     mov rdx, 4 ; FILE_APPEND_DATA
@@ -530,11 +539,17 @@ got_len:
     call CloseHandle
     
 save_score_end:
-    add rsp, 88
+    mov rsp, rbp
+    pop rbp
     ret
 save_score endp
 
 load_leaderboard proc
+    push rbp
+    mov rbp, rsp
+    and rsp, -16
+    sub rsp, 96
+
     ; Zero out buffer
     push rdi
     lea rdi, leaderboard_buf
@@ -543,7 +558,6 @@ load_leaderboard proc
     rep stosd
     pop rdi
     
-    sub rsp, 88
     lea rcx, filename
     mov rdx, 80000000h ; GENERIC_READ
     mov r8, 1 ; FILE_SHARE_READ
@@ -586,7 +600,8 @@ no_seek:
     call CloseHandle
     
 load_end:
-    add rsp, 88
+    mov rsp, rbp
+    pop rbp
     ret
 load_leaderboard endp
 
