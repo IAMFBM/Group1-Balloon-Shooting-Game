@@ -35,7 +35,8 @@ extrn CloseHandle:proc
     ; Name Entry State
     name_entry      dq 0
     name_len        dq 0
-    user_name       db 10 dup(' ')
+    user_name       db 10 dup(' '), 0
+    key_cooldown    dq 0
 
     ; Strings
     go_msg          db "GAME OVER! PRESS R TO RETRY OR ESC TO QUIT", 0
@@ -170,50 +171,73 @@ check_go_esc:
     jmp render_scene
 
 do_name_entry:
-    ; Name Entry Input (A-Z)
+    cmp qword ptr [key_cooldown], 0
+    jle check_enter
+    dec qword ptr [key_cooldown]
+    jmp render_name_entry
+
+check_enter:
+    mov rcx, 0Dh ; Enter
+    call GetAsyncKeyState
+    test ax, 8000h
+    jz do_name_keys
+    
+    call save_score
+    call load_leaderboard
+    mov name_entry, 0
+    mov score, 0
+    
+    ; Reset name for next time
+    push rdi
+    lea rdi, user_name
+    mov ecx, 10
+    mov al, ' '
+    rep stosb
+    pop rdi
+    jmp render_name_entry
+
+do_name_keys:
+    ; Backspace
+    mov rcx, 08h
+    call GetAsyncKeyState
+    test ax, 8000h
+    jz check_letters
+    
+    cmp name_len, 0
+    jle set_cooldown
+    dec name_len
+    mov r13, name_len
+    lea r14, user_name
+    mov byte ptr [r14 + r13], ' '
+    jmp set_cooldown
+
+check_letters:
     mov r12, 41h
-check_keys:
+check_letters_loop:
     mov rcx, r12
     call GetAsyncKeyState
-    test ax, 1 ; Check if pressed since last call
-    jz next_key
+    test ax, 8000h
+    jz next_letter
     
     cmp name_len, 8
-    jge next_key
+    jge set_cooldown
     
     mov r13, name_len
     lea r14, user_name
     mov byte ptr [r14 + r13], r12b
     inc name_len
-next_key:
+    jmp set_cooldown
+
+next_letter:
     inc r12
     cmp r12, 5Ah
-    jle check_keys
+    jle check_letters_loop
+    jmp render_name_entry
 
-    ; Check Backspace
-    mov rcx, 08h
-    call GetAsyncKeyState
-    test ax, 1
-    jz no_backspace
-    cmp name_len, 0
-    jle no_backspace
-    dec name_len
-    mov r13, name_len
-    lea r14, user_name
-    mov byte ptr [r14 + r13], ' '
-no_backspace:
+set_cooldown:
+    mov qword ptr [key_cooldown], 3
 
-    ; Check Enter
-    mov rcx, 0Dh
-    call GetAsyncKeyState
-    test ax, 1
-    jz no_enter
-    call save_score
-    call load_leaderboard ; Reload so we see the new score immediately
-    mov name_entry, 0 ; Done entering name
-    mov score, 0
-no_enter:
-
+render_name_entry:
     ; Draw Name Entry UI
     mov rcx, 25
     mov rdx, 10
