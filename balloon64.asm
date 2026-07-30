@@ -9,6 +9,9 @@ extrn GetAsyncKeyState:proc
 extrn ExitProcess:proc
 extrn CreateFileA:proc
 extrn WriteFile:proc
+extrn ReadFile:proc
+extrn GetFileSize:proc
+extrn SetFilePointer:proc
 extrn CloseHandle:proc
 
 .data
@@ -37,6 +40,7 @@ extrn CloseHandle:proc
     ; Strings
     go_msg          db "GAME OVER! PRESS R TO RETRY OR ESC TO QUIT", 0
     name_msg        db "NEW HIGH SCORE! ENTER NAME:", 0
+    lb_title        db "--- LEADERBOARD ---", 0
     score_pfx       db "SCORE: ", 0
     separator       db " - ", 0
     newline         db 13, 10
@@ -46,6 +50,7 @@ extrn CloseHandle:proc
     screen_buf      dd 2000 dup(?)
     score_buf       db 16 dup(?)
     dummy_bytes     dd ?
+    leaderboard_buf db 512 dup(?)
 
 .code
 main proc
@@ -54,6 +59,9 @@ main proc
     mov rcx, -11
     call GetStdHandle
     mov hOut, rax
+
+    ; Preload leaderboard if it exists
+    call load_leaderboard
 
 game_loop:
     call clear_buffer
@@ -140,10 +148,25 @@ check_go_esc:
     
     ; Draw Game Over text
     mov rcx, 19
-    mov rdx, 12
+    mov rdx, 6
     lea r8, go_msg
     mov r9d, 000Ch
     call draw_string
+    
+    ; Draw Leaderboard Title
+    mov rcx, 30
+    mov rdx, 8
+    lea r8, lb_title
+    mov r9d, 000Bh ; Cyan
+    call draw_string
+    
+    ; Draw Leaderboard Data
+    mov rcx, 30
+    mov rdx, 10
+    lea r8, leaderboard_buf
+    mov r9d, 000Fh ; White
+    call draw_multiline_string
+
     jmp render_scene
 
 do_name_entry:
@@ -186,6 +209,7 @@ no_backspace:
     test ax, 1
     jz no_enter
     call save_score
+    call load_leaderboard ; Reload so we see the new score immediately
     mov name_entry, 0 ; Done entering name
     mov score, 0
 no_enter:
@@ -314,6 +338,51 @@ ds_end:
     ret
 draw_string endp
 
+draw_multiline_string proc
+    ; RCX = Start X, RDX = Start Y, R8 = string pointer, R9D = Attribute
+    push r11
+    push r12
+    mov r11, rcx ; Current X
+    mov r12, rdx ; Current Y
+    
+dms_loop:
+    mov al, byte ptr [r8]
+    test al, al
+    jz dms_end
+    
+    cmp al, 13 ; CR
+    je skip_char
+    cmp al, 10 ; LF
+    je next_line
+    
+    ; Calculate offset
+    mov rax, r12
+    imul rax, rax, 80
+    add rax, r11
+    shl rax, 2
+    lea r10, screen_buf
+    add r10, rax
+    
+    mov al, byte ptr [r8]
+    mov byte ptr [r10], al
+    mov word ptr [r10 + 2], r9w
+    
+    inc r11
+    jmp skip_char
+
+next_line:
+    mov r11, rcx ; Reset X to start X
+    inc r12      ; Move down one line
+    
+skip_char:
+    inc r8
+    jmp dms_loop
+dms_end:
+    pop r12
+    pop r11
+    ret
+draw_multiline_string endp
+
 itoa proc
     mov rax, rcx
     mov r8, 10
@@ -356,6 +425,7 @@ move_balloon:
     jl end_update_balloon
     
     mov qword ptr [game_over], 1
+    call load_leaderboard ; Load leaderboard immediately upon death
 end_update_balloon:
     ret
 update_balloon endp
@@ -463,5 +533,61 @@ save_score_end:
     add rsp, 88
     ret
 save_score endp
+
+load_leaderboard proc
+    ; Zero out buffer
+    push rdi
+    lea rdi, leaderboard_buf
+    mov ecx, 128
+    xor eax, eax
+    rep stosd
+    pop rdi
+    
+    sub rsp, 88
+    lea rcx, filename
+    mov rdx, 80000000h ; GENERIC_READ
+    mov r8, 1 ; FILE_SHARE_READ
+    mov r9, 0
+    mov qword ptr [rsp+32], 3 ; OPEN_EXISTING
+    mov qword ptr [rsp+40], 80h ; FILE_ATTRIBUTE_NORMAL
+    mov qword ptr [rsp+48], 0
+    call CreateFileA
+    
+    cmp rax, -1
+    je load_end
+    mov r15, rax ; handle
+    
+    ; Get file size
+    mov rcx, r15
+    mov rdx, 0
+    call GetFileSize
+    
+    cmp rax, 511
+    jle no_seek
+    
+    ; Seek to end - 511 so we only read the newest scores
+    sub rax, 511
+    mov rcx, r15
+    mov rdx, rax
+    mov r8, 0
+    mov r9, 0 ; FILE_BEGIN
+    call SetFilePointer
+    
+no_seek:
+    ; ReadFile
+    mov rcx, r15
+    lea rdx, leaderboard_buf
+    mov r8, 511
+    lea r9, dummy_bytes
+    mov qword ptr [rsp+32], 0
+    call ReadFile
+    
+    mov rcx, r15
+    call CloseHandle
+    
+load_end:
+    add rsp, 88
+    ret
+load_leaderboard endp
 
 end
