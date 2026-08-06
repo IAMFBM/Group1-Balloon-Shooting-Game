@@ -5,6 +5,8 @@
 org 100h
 jmp start
 
+MAX_BULLETS equ 5
+
 ; --- VARIABLES ---
 player_x    dw 150
 player_y    dw 185    ; At the bottom
@@ -19,12 +21,14 @@ balloon_h   dw 15
 balloon_col db 4
 balloon_act db 1
 
-bullet_x    dw 0
-bullet_y    dw 0
+bullet_x    dw MAX_BULLETS dup(0)
+bullet_y    dw MAX_BULLETS dup(0)
+bullet_act  db MAX_BULLETS dup(0)
 bullet_w    dw 6
 bullet_h    dw 5
 bullet_col  db 14
-bullet_act  db 0
+
+fire_cooldown dw 0
 
 score       dw 0
 
@@ -94,19 +98,38 @@ move_right:
     jmp no_key
 
 shoot:
-    cmp bullet_act, 1
-    je no_key
-    mov bullet_act, 1
+    cmp fire_cooldown, 0
+    jg no_key
+    
+    mov cx, MAX_BULLETS
+    xor bx, bx ; byte index
+    xor di, di ; word index
+shoot_find_loop:
+    cmp bullet_act[bx], 0
+    je found_slot
+    inc bx
+    add di, 2
+    loop shoot_find_loop
+    jmp no_key ; No empty slots
+
+found_slot:
+    mov bullet_act[bx], 1
     mov ax, player_x
-    add ax, 9
-    mov bullet_x, ax
+    add ax, 7
+    mov bullet_x[di], ax
     mov ax, player_y
-    sub ax, 5  ; spawn above player
-    mov bullet_y, ax
+    sub ax, 5
+    mov bullet_y[di], ax
+    mov fire_cooldown, 5 ; Cooldown between shots
     jmp no_key
 
 no_key:
     ; 2. Game Logic
+    cmp fire_cooldown, 0
+    jle skip_cd
+    dec fire_cooldown
+skip_cd:
+
     call update_bullet
     call update_balloon
     call check_collision
@@ -143,9 +166,18 @@ reset_game:
     mov score, 0
     mov balloon_y, 0
     mov balloon_act, 1
-    mov bullet_act, 0
     mov player_x, 150
     mov player_col, 9
+    mov fire_cooldown, 0
+    
+    ; Clear all bullets
+    mov cx, MAX_BULLETS
+    xor bx, bx
+clear_bul:
+    mov bullet_act[bx], 0
+    inc bx
+    loop clear_bul
+
     jmp game_loop
 
 exit_game:
@@ -221,47 +253,68 @@ end_update_balloon:
 update_balloon endp
 
 update_bullet proc
-    cmp bullet_act, 1
-    jne end_update_bullet
-    sub bullet_y, 5    ; Bullet moves UP
-    cmp bullet_y, 0
-    jg end_update_bullet
-    mov bullet_act, 0
-end_update_bullet:
+    mov cx, MAX_BULLETS
+    xor bx, bx
+    xor di, di
+ub_loop:
+    cmp bullet_act[bx], 1
+    jne ub_next
+    mov ax, bullet_y[di]
+    sub ax, 5          ; Bullet moves UP
+    mov bullet_y[di], ax
+    cmp ax, 0
+    jg ub_next
+    mov bullet_act[bx], 0
+ub_next:
+    inc bx
+    add di, 2
+    loop ub_loop
     ret
 update_bullet endp
 
 check_collision proc
-    cmp bullet_act, 1
-    jne end_collision
     cmp balloon_act, 1
     jne end_collision
 
-    ; Box Collision Detection (Bullet vs Balloon)
-    mov ax, bullet_x
+    mov cx, MAX_BULLETS
+    xor bx, bx
+    xor di, di
+cc_loop:
+    cmp bullet_act[bx], 1
+    jne cc_next
+
+    ; Collision detection for bullet[di] vs balloon
+    mov ax, bullet_x[di]
     add ax, bullet_w
     cmp ax, balloon_x
-    jl end_collision
+    jl cc_next
 
     mov ax, balloon_x
     add ax, balloon_w
-    cmp bullet_x, ax
-    jg end_collision
+    cmp bullet_x[di], ax
+    jg cc_next
 
-    mov ax, bullet_y
+    mov ax, bullet_y[di]
     add ax, bullet_h
     cmp ax, balloon_y
-    jl end_collision
+    jl cc_next
 
     mov ax, balloon_y
     add ax, balloon_h
-    cmp bullet_y, ax
-    jg end_collision
+    cmp bullet_y[di], ax
+    jg cc_next
 
     ; HIT BALLOON!
     mov balloon_act, 0
-    mov bullet_act, 0
+    mov bullet_act[bx], 0
     inc score
+    jmp end_collision ; Balloon destroyed, stop checking bullets
+
+cc_next:
+    inc bx
+    add di, 2
+    loop cc_loop
+
 end_collision:
     ret
 check_collision endp
@@ -314,12 +367,21 @@ draw_new proc
     call draw_balloon_sprite
 skip_draw_b:
 
-    ; Draw Bullet
-    cmp bullet_act, 1
-    jne skip_draw_bul
-    mov ax, bullet_x
+    ; Draw Bullets
+    mov cx, MAX_BULLETS
+    xor bx, bx
+    xor di, di
+draw_bul_loop:
+    cmp bullet_act[bx], 1
+    jne draw_bul_next
+    
+    push cx
+    push bx
+    push di
+    
+    mov ax, bullet_x[di]
     mov rect_x, ax
-    mov ax, bullet_y
+    mov ax, bullet_y[di]
     mov rect_y, ax
     mov ax, bullet_w
     mov rect_w, ax
@@ -328,7 +390,16 @@ skip_draw_b:
     mov al, bullet_col
     mov rect_c, al
     call draw_rect
-skip_draw_bul:
+    
+    pop di
+    pop bx
+    pop cx
+    
+draw_bul_next:
+    inc bx
+    add di, 2
+    loop draw_bul_loop
+
     ret
 draw_new endp
 

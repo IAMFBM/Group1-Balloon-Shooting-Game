@@ -28,9 +28,10 @@ extrn CloseHandle:proc             ; Closes an open object handle (like a file h
     balloon_act     dq 1            ; Flag: 1 if balloon is active (falling), 0 if it was shot
     balloon_timer   dq 0            ; Frame counter used to throttle the balloon's falling speed
 
-    bullet_x        dq 0            ; Bullet's current X coordinate
-    bullet_y        dq 0            ; Bullet's current Y coordinate
-    bullet_act      dq 0            ; Flag: 1 if bullet is active (flying up), 0 if inactive
+    bullet_x        dq 10 dup(0)    ; Array of 10 Bullet X coordinates
+    bullet_y        dq 10 dup(0)    ; Array of 10 Bullet Y coordinates
+    bullet_act      dq 10 dup(0)    ; Array of 10 Bullet active flags
+    fire_cooldown   dq 0            ; Cooldown timer for shooting
     
     game_over       dq 0            ; Flag: 1 if Game Over state is active, 0 if playing
     score           dq 0            ; The player's current score
@@ -119,13 +120,30 @@ not_right:
     call GetAsyncKeyState
     test ax, 8000h
     jz not_space
-    cmp bullet_act, 1               ; If a bullet is already active, don't shoot another one
-    je not_space
-    mov bullet_act, 1               ; Set bullet as active
-    mov rax, player_x               ; Copy player's X to bullet's X
-    mov bullet_x, rax
-    mov qword ptr [bullet_y], 22    ; Spawn bullet just above the player (Y=22)
+    cmp qword ptr [fire_cooldown], 0
+    jg not_space
+
+    mov rcx, 10
+    xor rbx, rbx
+shoot_loop64:
+    cmp qword ptr [bullet_act + rbx*8], 0
+    je shoot_found64
+    inc rbx
+    loop shoot_loop64
+    jmp not_space
+
+shoot_found64:
+    mov qword ptr [bullet_act + rbx*8], 1
+    mov rax, player_x
+    mov qword ptr [bullet_x + rbx*8], rax
+    mov qword ptr [bullet_y + rbx*8], 22
+    mov qword ptr [fire_cooldown], 3 ; Cooldown
 not_space:
+
+    cmp qword ptr [fire_cooldown], 0
+    jle skip_fcd64
+    dec qword ptr [fire_cooldown]
+skip_fcd64:
 
     ; Check Esc Key (Virtual Key 0x1B)
     mov rcx, 1Bh
@@ -165,8 +183,15 @@ no_name_entry:
     mov qword ptr [balloon_act], 1
     mov qword ptr [balloon_y], 0
     mov qword ptr [balloon_timer], 0
-    mov qword ptr [bullet_act], 0
     mov qword ptr [score], 0
+    mov qword ptr [fire_cooldown], 0
+    ; Clear bullets
+    mov rcx, 10
+    xor rbx, rbx
+clear_b64:
+    mov qword ptr [bullet_act + rbx*8], 0
+    inc rbx
+    loop clear_b64
     mov qword ptr [level], 1
     mov qword ptr [balloon_speed], 3
     mov qword ptr [player_speed], 1
@@ -350,13 +375,23 @@ render_scene:
 no_balloon_draw:
 
     ; Draw Bullet ('|')
-    cmp bullet_act, 1
-    jne no_bullet_draw
-    mov rcx, bullet_x
-    mov rdx, bullet_y
+    mov rcx, 10
+    xor rbx, rbx
+draw_bul_loop64:
+    cmp qword ptr [bullet_act + rbx*8], 1
+    jne db_next64
+    
+    push rcx
+    push rbx
+    mov rcx, qword ptr [bullet_x + rbx*8]
+    mov rdx, qword ptr [bullet_y + rbx*8]
     mov r8d, 000E007Ch              ; 000E (Yellow attribute), 007C (ASCII '|')
     call draw_char
-no_bullet_draw:
+    pop rbx
+    pop rcx
+db_next64:
+    inc rbx
+    loop draw_bul_loop64
 
     ; Blit the entire screen_buf to the actual Windows Console
     ; WriteConsoleOutputA(hConsoleOutput, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion)
@@ -538,68 +573,80 @@ update_balloon endp
 
 ; Handles bullet upward movement
 update_bullet proc
-    cmp bullet_act, 1
-    jne end_update_bullet
-    dec qword ptr [bullet_y]        ; Move bullet up one row
-    cmp qword ptr [bullet_y], 0
-    jge end_update_bullet
-    mov bullet_act, 0               ; If it goes past top of screen, retire it
-end_update_bullet:
+    mov rcx, 10
+    xor rbx, rbx
+ub_loop64:
+    cmp qword ptr [bullet_act + rbx*8], 1
+    jne ub_next64
+    dec qword ptr [bullet_y + rbx*8]
+    cmp qword ptr [bullet_y + rbx*8], 0
+    jge ub_next64
+    mov qword ptr [bullet_act + rbx*8], 0
+ub_next64:
+    inc rbx
+    loop ub_loop64
     ret
 update_bullet endp
 
 ; Checks if the bullet hitbox intersects the balloon hitbox
 check_collision proc
-    cmp bullet_act, 1
-    jne end_check                   ; Must have active bullet
     cmp balloon_act, 1
-    jne end_check                   ; Must have active balloon
+    jne end_check
 
-    ; Check X bounds
-    mov rax, bullet_x
+    mov rcx, 10
+    xor rbx, rbx
+cc_loop64:
+    cmp qword ptr [bullet_act + rbx*8], 1
+    jne cc_next64
+
+    mov rax, qword ptr [bullet_x + rbx*8]
     cmp rax, balloon_x
-    jl end_check                    ; If bullet X < balloon Left X, miss
-    mov rcx, balloon_x
-    add rcx, 2
-    cmp rax, rcx
-    jg end_check                    ; If bullet X > balloon Right X, miss
+    jl cc_next64
+    mov r8, balloon_x
+    add r8, 2
+    cmp rax, r8
+    jg cc_next64
 
-    ; Check Y bounds
-    mov rax, bullet_y
+    mov rax, qword ptr [bullet_y + rbx*8]
     cmp rax, balloon_y
-    jg end_check                    ; If bullet Y > balloon Y, hasn't reached it yet
+    jg cc_next64
 
     ; HIT!
-    mov balloon_act, 0              ; Destroy balloon
-    mov bullet_act, 0               ; Destroy bullet
-    inc score                       ; Increase score
+    mov balloon_act, 0
+    mov qword ptr [bullet_act + rbx*8], 0
+    inc score
     
     ; Calculate Dynamic Level (Level = Score / 5 + 1)
     mov rax, score
     mov rcx, 5
     xor rdx, rdx
-    div rcx                         ; RAX = Score / 5
+    div rcx
     inc rax
-    mov qword ptr [level], rax      ; Update level variable
+    mov qword ptr [level], rax
     
-    ; Calculate Dynamic Balloon Speed (Speed = 4 - Level. Minimum 1)
+    ; Calculate Dynamic Balloon Speed
     mov rcx, 4
     sub rcx, rax
     cmp rcx, 1
-    jge set_spd                     ; If Speed >= 1, keep it
-    mov rcx, 1                      ; Otherwise, clamp Speed to 1 (Fastest)
+    jge set_spd
+    mov rcx, 1
 set_spd:
     mov qword ptr [balloon_speed], rcx
 
-    ; Calculate Player Speed (Speed = (Level + 1) / 2)
+    ; Calculate Player Speed
     mov rax, qword ptr [level]
     inc rax
-    shr rax, 1                      ; Divide by 2
+    shr rax, 1
     cmp rax, 1
     jge set_pspd
     mov rax, 1
 set_pspd:
     mov qword ptr [player_speed], rax
+    jmp end_check ; Balloon destroyed, stop checking bullets
+
+cc_next64:
+    inc rbx
+    loop cc_loop64
 
 end_check:
     ret
