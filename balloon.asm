@@ -7,13 +7,13 @@ jmp start
 
 ; --- VARIABLES ---
 player_x    dw 150
-player_y    dw 185
+player_y    dw 5      ; At the top
 player_w    dw 20
 player_h    dw 10
 player_col  db 9
 
 balloon_x   dw 100
-balloon_y   dw 0      ; Start at TOP (Floating top to bottom)
+balloon_y   dw 200    ; Start at BOTTOM (Floating up)
 balloon_w   dw 15
 balloon_h   dw 15
 balloon_col db 4
@@ -33,6 +33,27 @@ rect_y dw 0
 rect_w dw 0
 rect_h dw 0
 rect_c db 0
+
+; UI Strings
+score_str   db 'SCORE: 0000', 0
+go_str      db 'GAME OVER! PRESS R TO RETRY', 0
+
+; Sprite Data (15x15 Circular Balloon)
+balloon_bmp db 0,0,0,0,0,1,1,1,1,1,0,0,0,0,0
+            db 0,0,0,1,1,1,1,1,1,1,1,1,0,0,0
+            db 0,0,1,1,1,1,1,1,1,1,1,1,1,0,0
+            db 0,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+            db 0,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+            db 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            db 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            db 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            db 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            db 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            db 0,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+            db 0,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+            db 0,0,1,1,1,1,1,1,1,1,1,1,1,0,0
+            db 0,0,0,1,1,1,1,1,1,1,1,1,0,0,0
+            db 0,0,0,0,0,1,1,1,1,1,0,0,0,0,0
 
 ; --- MAIN CODE ---
 start:
@@ -80,6 +101,7 @@ shoot:
     add ax, 9
     mov bullet_x, ax
     mov ax, player_y
+    add ax, 10 ; spawn below player
     mov bullet_y, ax
     jmp no_key
 
@@ -93,6 +115,7 @@ no_key:
     call clear_buffer    ; Fill offscreen buffer with black
     call draw_new        ; Draw game objects to offscreen buffer
     call blit_screen     ; Wait for VSYNC and copy buffer to Video Memory
+    call draw_score      ; Draw Score UI over the top via BIOS
 
     jmp game_loop
 
@@ -102,14 +125,28 @@ player_die:
     call clear_buffer
     call draw_new
     call blit_screen
-    
-    ; 1.5 second delay so the player can see they died
-    mov cx, 0016h
-    mov dx, 0E360h ; ~1.5 million microseconds
-    mov ah, 86h
-    int 15h
-    
-    jmp exit_game
+    call draw_score
+    call draw_game_over
+
+wait_retry:
+    mov ah, 00h
+    int 16h
+    cmp al, 'r'
+    je reset_game
+    cmp al, 'R'
+    je reset_game
+    cmp ah, 01h ; Esc
+    je exit_game
+    jmp wait_retry
+
+reset_game:
+    mov score, 0
+    mov balloon_y, 200
+    mov balloon_act, 1
+    mov bullet_act, 0
+    mov player_x, 150
+    mov player_col, 9
+    jmp game_loop
 
 exit_game:
     ; Return to Text Mode (03h)
@@ -126,7 +163,7 @@ update_balloon proc
     
     ; Respawn logic
     mov balloon_act, 1
-    mov balloon_y, 0   ; Spawn at the top of the screen
+    mov balloon_y, 200   ; Spawn at the bottom of the screen
     
     ; Randomize X coordinate
     push ax
@@ -147,11 +184,11 @@ update_balloon proc
     ret
 
 move_balloon:
-    add balloon_y, 2   ; Balloon moves DOWN (Top to Bottom)
-    cmp balloon_y, 185 ; Check if it reached the bottom (near player)
-    jl check_player_col
+    sub balloon_y, 2   ; Balloon moves UP
+    cmp balloon_y, 15  ; Check if it reached the top (near player)
+    jg check_player_col
     
-    ; Despawn if it missed the player and hit the ground
+    ; Despawn if it missed the player and hit the ceiling
     mov balloon_act, 0
     ret
     
@@ -187,9 +224,9 @@ update_balloon endp
 update_bullet proc
     cmp bullet_act, 1
     jne end_update_bullet
-    sub bullet_y, 5
-    cmp bullet_y, 0
-    jg end_update_bullet
+    add bullet_y, 5    ; Bullet moves DOWN
+    cmp bullet_y, 200
+    jl end_update_bullet
     mov bullet_act, 0
 end_update_bullet:
     ret
@@ -266,20 +303,16 @@ draw_new proc
     mov rect_c, al
     call draw_rect
 
-    ; Draw Balloon
+    ; Draw Balloon Sprite
     cmp balloon_act, 1
     jne skip_draw_b
     mov ax, balloon_x
     mov rect_x, ax
     mov ax, balloon_y
     mov rect_y, ax
-    mov ax, balloon_w
-    mov rect_w, ax
-    mov ax, balloon_h
-    mov rect_h, ax
     mov al, balloon_col
     mov rect_c, al
-    call draw_rect
+    call draw_balloon_sprite
 skip_draw_b:
 
     ; Draw Bullet
@@ -345,6 +378,57 @@ col_loop:
     ret
 draw_rect endp
 
+draw_balloon_sprite proc
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+
+    push ds
+    pop es
+    
+    mov si, offset balloon_bmp
+    mov cx, 15 ; height
+    mov bx, rect_y
+row_loop_b:
+    push cx
+    mov cx, 15 ; width
+    
+    mov ax, 320
+    push dx
+    mul bx
+    pop dx
+    add ax, rect_x
+    add ax, offset double_buffer
+    mov di, ax
+    
+    mov dl, rect_c
+col_loop_b:
+    lodsb      ; AL = [SI], SI++
+    test al, al
+    jz skip_pixel
+    mov es:[di], dl ; Draw pixel if sprite data is 1
+skip_pixel:
+    inc di
+    loop col_loop_b
+    
+    inc bx
+    pop cx
+    loop row_loop_b
+    
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+draw_balloon_sprite endp
+
 blit_screen proc
     push ax
     push cx
@@ -382,6 +466,78 @@ wait_vblank_loop2:
     pop ax
     ret
 blit_screen endp
+
+draw_score proc
+    push ax
+    push bx
+    push cx
+    push dx
+    push bp
+    push es
+
+    ; Convert score integer to ASCII string
+    mov ax, score
+    mov cx, 10
+    mov bx, offset score_str + 10 ; point to last digit '0'
+convert_loop:
+    xor dx, dx
+    div cx
+    add dl, '0'
+    mov [bx], dl
+    dec bx
+    test ax, ax
+    jnz convert_loop
+    
+    ; Draw String using BIOS int 10h (AH=13h)
+    mov ax, ds
+    mov es, ax
+    mov bp, offset score_str
+    mov ah, 13h
+    mov al, 00h
+    mov bh, 0
+    mov bl, 0Ah ; Light green
+    mov cx, 11  ; Length of "SCORE: 0000"
+    mov dh, 1   ; Row
+    mov dl, 1   ; Col
+    int 10h
+    
+    pop es
+    pop bp
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+draw_score endp
+
+draw_game_over proc
+    push ax
+    push bx
+    push cx
+    push dx
+    push bp
+    push es
+
+    mov ax, ds
+    mov es, ax
+    mov bp, offset go_str
+    mov ah, 13h
+    mov al, 00h
+    mov bh, 0
+    mov bl, 0Ch ; Light Red
+    mov cx, 27  ; Length
+    mov dh, 12  ; Row (middle)
+    mov dl, 6   ; Col (approx centered)
+    int 10h
+    
+    pop es
+    pop bp
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+draw_game_over endp
 
 ; --- DOUBLE BUFFER ALLOCATION ---
 ; In a .COM file, DOS gives us all available memory in the segment (up to 64KB).
