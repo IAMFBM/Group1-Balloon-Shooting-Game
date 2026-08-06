@@ -7,13 +7,13 @@ jmp start
 
 ; --- VARIABLES ---
 player_x    dw 150
-player_y    dw 5      ; At the top
+player_y    dw 185    ; At the bottom
 player_w    dw 20
 player_h    dw 10
 player_col  db 9
 
 balloon_x   dw 100
-balloon_y   dw 200    ; Start at BOTTOM (Floating up)
+balloon_y   dw 0      ; Start at TOP (Falling down)
 balloon_w   dw 15
 balloon_h   dw 15
 balloon_col db 4
@@ -101,7 +101,7 @@ shoot:
     add ax, 9
     mov bullet_x, ax
     mov ax, player_y
-    add ax, 10 ; spawn below player
+    sub ax, 5  ; spawn above player
     mov bullet_y, ax
     jmp no_key
 
@@ -141,7 +141,7 @@ wait_retry:
 
 reset_game:
     mov score, 0
-    mov balloon_y, 200
+    mov balloon_y, 0
     mov balloon_act, 1
     mov bullet_act, 0
     mov player_x, 150
@@ -163,7 +163,7 @@ update_balloon proc
     
     ; Respawn logic
     mov balloon_act, 1
-    mov balloon_y, 200   ; Spawn at the bottom of the screen
+    mov balloon_y, 0     ; Spawn at the top of the screen
     
     ; Randomize X coordinate
     push ax
@@ -184,13 +184,12 @@ update_balloon proc
     ret
 
 move_balloon:
-    sub balloon_y, 2   ; Balloon moves UP
-    cmp balloon_y, 15  ; Check if it reached the top (near player)
-    jg check_player_col
+    add balloon_y, 2   ; Balloon moves DOWN
+    cmp balloon_y, 185 ; Check if it reached the bottom
+    jl check_player_col
     
-    ; Despawn if it missed the player and hit the ceiling
-    mov balloon_act, 0
-    ret
+    ; GAME OVER if it reached the bottom without getting shot
+    jmp player_die
     
 check_player_col:
     ; Box Collision Detection (Player vs Balloon)
@@ -224,9 +223,9 @@ update_balloon endp
 update_bullet proc
     cmp bullet_act, 1
     jne end_update_bullet
-    add bullet_y, 5    ; Bullet moves DOWN
-    cmp bullet_y, 200
-    jl end_update_bullet
+    sub bullet_y, 5    ; Bullet moves UP
+    cmp bullet_y, 0
+    jg end_update_bullet
     mov bullet_act, 0
 end_update_bullet:
     ret
