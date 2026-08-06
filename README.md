@@ -100,3 +100,7 @@ Assembly lacks standard libraries (like `printf` or `fprintf`). To write to the 
 3. `WriteFile` pushes the string buffer to the hard drive.
 4. `CloseHandle` releases the file lock. 
 To display the leaderboard, the game uses `SetFilePointer` to seek to the end of the file and reads the last 511 bytes to ensure only the most recent high scores are displayed on the Game Over screen.
+
+### 5. Overcoming 64-bit Addressing Limitations
+When migrating from 16/32-bit x86 to 64-bit x64, using standard scale-index-base addressing on global data variables (e.g. `mov rax, [bullet_x + rbx*8]`) results in `error LNK2017: 'ADDR32' relocation invalid` because the Microsoft Linker refuses to embed 32-bit absolute addresses in a 64-bit executable space. 
+To overcome this without resorting to the ugly `/LARGEADDRESSAWARE:NO` linker flag, the 64-bit game explicitly utilizes **RIP-Relative Addressing** by loading the array's base address via the `lea` instruction (`lea r9, bullet_x`), and then performing register-register displacement (`mov rax, [r9 + rbx*8]`). This allows the code to remain fully 64-bit compliant!
