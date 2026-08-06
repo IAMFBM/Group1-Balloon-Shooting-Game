@@ -129,7 +129,8 @@ shoot_loop64:
     cmp qword ptr [bullet_act + rbx*8], 0
     je shoot_found64
     inc rbx
-    loop shoot_loop64
+    dec rcx
+    jnz shoot_loop64
     jmp not_space
 
 shoot_found64:
@@ -191,7 +192,8 @@ no_name_entry:
 clear_b64:
     mov qword ptr [bullet_act + rbx*8], 0
     inc rbx
-    loop clear_b64
+    dec rcx
+    jnz clear_b64
     mov qword ptr [level], 1
     mov qword ptr [balloon_speed], 3
     mov qword ptr [player_speed], 1
@@ -391,7 +393,8 @@ draw_bul_loop64:
     pop rcx
 db_next64:
     inc rbx
-    loop draw_bul_loop64
+    dec rcx
+    jnz draw_bul_loop64
 
     ; Blit the entire screen_buf to the actual Windows Console
     ; WriteConsoleOutputA(hConsoleOutput, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion)
@@ -584,7 +587,8 @@ ub_loop64:
     mov qword ptr [bullet_act + rbx*8], 0
 ub_next64:
     inc rbx
-    loop ub_loop64
+    dec rcx
+    jnz ub_loop64
     ret
 update_bullet endp
 
@@ -646,7 +650,8 @@ set_pspd:
 
 cc_next64:
     inc rbx
-    loop cc_loop64
+    dec rcx
+    jnz cc_loop64
 
 end_check:
     ret
