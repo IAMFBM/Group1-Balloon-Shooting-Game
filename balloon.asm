@@ -21,7 +21,7 @@ balloon_act db 1
 
 bullet_x    dw 0
 bullet_y    dw 0
-bullet_w    dw 2
+bullet_w    dw 6
 bullet_h    dw 5
 bullet_col  db 14
 bullet_act  db 0
