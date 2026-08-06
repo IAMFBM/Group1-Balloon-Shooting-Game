@@ -126,7 +126,8 @@ not_right:
     mov rcx, 10
     xor rbx, rbx
 shoot_loop64:
-    cmp qword ptr [bullet_act + rbx*8], 0
+    lea r8, bullet_act
+    cmp qword ptr [r8 + rbx*8], 0
     je shoot_found64
     inc rbx
     dec rcx
@@ -134,10 +135,13 @@ shoot_loop64:
     jmp not_space
 
 shoot_found64:
-    mov qword ptr [bullet_act + rbx*8], 1
+    lea r8, bullet_act
+    lea r9, bullet_x
+    lea r10, bullet_y
+    mov qword ptr [r8 + rbx*8], 1
     mov rax, player_x
-    mov qword ptr [bullet_x + rbx*8], rax
-    mov qword ptr [bullet_y + rbx*8], 22
+    mov qword ptr [r9 + rbx*8], rax
+    mov qword ptr [r10 + rbx*8], 22
     mov qword ptr [fire_cooldown], 3 ; Cooldown
 not_space:
 
@@ -190,7 +194,8 @@ no_name_entry:
     mov rcx, 10
     xor rbx, rbx
 clear_b64:
-    mov qword ptr [bullet_act + rbx*8], 0
+    lea r8, bullet_act
+    mov qword ptr [r8 + rbx*8], 0
     inc rbx
     dec rcx
     jnz clear_b64
@@ -380,13 +385,16 @@ no_balloon_draw:
     mov rcx, 10
     xor rbx, rbx
 draw_bul_loop64:
-    cmp qword ptr [bullet_act + rbx*8], 1
+    lea r10, bullet_act
+    cmp qword ptr [r10 + rbx*8], 1
     jne db_next64
     
     push rcx
     push rbx
-    mov rcx, qword ptr [bullet_x + rbx*8]
-    mov rdx, qword ptr [bullet_y + rbx*8]
+    lea r10, bullet_x
+    mov rcx, qword ptr [r10 + rbx*8]
+    lea r10, bullet_y
+    mov rdx, qword ptr [r10 + rbx*8]
     mov r8d, 000E007Ch              ; 000E (Yellow attribute), 007C (ASCII '|')
     call draw_char
     pop rbx
@@ -579,12 +587,14 @@ update_bullet proc
     mov rcx, 10
     xor rbx, rbx
 ub_loop64:
-    cmp qword ptr [bullet_act + rbx*8], 1
+    lea r8, bullet_act
+    cmp qword ptr [r8 + rbx*8], 1
     jne ub_next64
-    dec qword ptr [bullet_y + rbx*8]
-    cmp qword ptr [bullet_y + rbx*8], 0
+    lea r9, bullet_y
+    dec qword ptr [r9 + rbx*8]
+    cmp qword ptr [r9 + rbx*8], 0
     jge ub_next64
-    mov qword ptr [bullet_act + rbx*8], 0
+    mov qword ptr [r8 + rbx*8], 0
 ub_next64:
     inc rbx
     dec rcx
@@ -600,24 +610,28 @@ check_collision proc
     mov rcx, 10
     xor rbx, rbx
 cc_loop64:
-    cmp qword ptr [bullet_act + rbx*8], 1
+    lea r8, bullet_act
+    cmp qword ptr [r8 + rbx*8], 1
     jne cc_next64
 
-    mov rax, qword ptr [bullet_x + rbx*8]
+    lea r9, bullet_x
+    mov rax, qword ptr [r9 + rbx*8]
     cmp rax, balloon_x
     jl cc_next64
-    mov r8, balloon_x
-    add r8, 2
-    cmp rax, r8
+    mov r10, balloon_x
+    add r10, 2
+    cmp rax, r10
     jg cc_next64
 
-    mov rax, qword ptr [bullet_y + rbx*8]
+    lea r9, bullet_y
+    mov rax, qword ptr [r9 + rbx*8]
     cmp rax, balloon_y
     jg cc_next64
 
     ; HIT!
     mov balloon_act, 0
-    mov qword ptr [bullet_act + rbx*8], 0
+    lea r8, bullet_act
+    mov qword ptr [r8 + rbx*8], 0
     inc score
     
     ; Calculate Dynamic Level (Level = Score / 5 + 1)
