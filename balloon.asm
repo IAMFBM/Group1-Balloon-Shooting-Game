@@ -1,5 +1,5 @@
 ; Balloon Shooting Game for EMU8086 / DOSBox (Top-Down, Player Death)
-; Environment: DOS 16-bit
+; Environment: DOS 16-bit (.COM)
 ; Video Mode: VGA Mode 13h (320x200, 256 colors)
 
 org 100h
@@ -12,19 +12,12 @@ player_w    dw 20
 player_h    dw 10
 player_col  db 9
 
-old_px      dw 150
-old_py      dw 185
-
 balloon_x   dw 100
-balloon_y   dw 0      ; Start at TOP
+balloon_y   dw 0      ; Start at TOP (Floating top to bottom)
 balloon_w   dw 15
 balloon_h   dw 15
 balloon_col db 4
 balloon_act db 1
-
-old_bx      dw 100
-old_by      dw 0
-old_bact    db 1
 
 bullet_x    dw 0
 bullet_y    dw 0
@@ -32,10 +25,6 @@ bullet_w    dw 2
 bullet_h    dw 5
 bullet_col  db 14
 bullet_act  db 0
-
-old_bulx    dw 0
-old_buly    dw 0
-old_bulact  db 0
 
 score       dw 0
 
@@ -47,23 +36,25 @@ rect_c db 0
 
 ; --- MAIN CODE ---
 start:
+    ; Set VGA Mode 13h
     mov ax, 0013h
     int 10h
 
 game_loop:
-    ; 1. Handle Input
+    ; 1. Handle Input (Non-blocking)
     mov ah, 01h
     int 16h
     jz no_key
     
+    ; Flush keybuffer
     mov ah, 00h
     int 16h
     
-    cmp ah, 4Bh ; Left
+    cmp ah, 4Bh ; Left Arrow
     je move_left
-    cmp ah, 4Dh ; Right
+    cmp ah, 4Dh ; Right Arrow
     je move_right
-    cmp al, ' ' ; Space
+    cmp al, ' ' ; Spacebar
     je shoot
     cmp ah, 01h ; Esc
     je exit_game
@@ -98,24 +89,19 @@ no_key:
     call update_balloon
     call check_collision
 
-    ; 3. Wait for Vertical Blank (VBLANK) to prevent flickering and control speed (70 FPS)
-    call wait_vblank
-
-    ; 4. ERASE OLD POSITIONS
-    call erase_old
-
-    ; 5. DRAW NEW POSITIONS
-    call draw_new
-
-    ; 6. SAVE CURRENT TO OLD
-    call save_old
+    ; 3. Render Pipeline (Double Buffered to eliminate flickering)
+    call clear_buffer    ; Fill offscreen buffer with black
+    call draw_new        ; Draw game objects to offscreen buffer
+    call blit_screen     ; Wait for VSYNC and copy buffer to Video Memory
 
     jmp game_loop
 
 player_die:
     ; Turn player red to indicate death
     mov player_col, 4
+    call clear_buffer
     call draw_new
+    call blit_screen
     
     ; 1.5 second delay so the player can see they died
     mov cx, 0016h
@@ -126,6 +112,7 @@ player_die:
     jmp exit_game
 
 exit_game:
+    ; Return to Text Mode (03h)
     mov ax, 0003h
     int 10h
     mov ah, 4Ch
@@ -137,19 +124,19 @@ update_balloon proc
     cmp balloon_act, 1
     je move_balloon
     
-    ; respawn logic
+    ; Respawn logic
     mov balloon_act, 1
     mov balloon_y, 0   ; Spawn at the top of the screen
     
-    ; randomize X 
+    ; Randomize X coordinate
     push ax
     push bx
     push cx
     push dx
-    mov ah, 2Ch 
+    mov ah, 2Ch        ; Get System Time
     int 21h
     xor ax, ax
-    mov al, dl
+    mov al, dl         ; Hundredths of a second
     mov bl, 3
     mul bl
     mov balloon_x, ax
@@ -160,7 +147,7 @@ update_balloon proc
     ret
 
 move_balloon:
-    add balloon_y, 2   ; Balloon moves DOWN
+    add balloon_y, 2   ; Balloon moves DOWN (Top to Bottom)
     cmp balloon_y, 185 ; Check if it reached the bottom (near player)
     jl check_player_col
     
@@ -169,7 +156,7 @@ move_balloon:
     ret
     
 check_player_col:
-    ; Check if balloon intersects the player
+    ; Box Collision Detection (Player vs Balloon)
     mov ax, balloon_x
     add ax, balloon_w
     cmp ax, player_x
@@ -214,6 +201,7 @@ check_collision proc
     cmp balloon_act, 1
     jne end_collision
 
+    ; Box Collision Detection (Bullet vs Balloon)
     mov ax, bullet_x
     add ax, bullet_w
     cmp ax, balloon_x
@@ -234,6 +222,7 @@ check_collision proc
     cmp bullet_y, ax
     jg end_collision
 
+    ; HIT BALLOON!
     mov balloon_act, 0
     mov bullet_act, 0
     inc score
@@ -241,69 +230,27 @@ end_collision:
     ret
 check_collision endp
 
-; --- RENDERING PROCEDURES ---
+; --- RENDERING PROCEDURES (Double Buffered) ---
 
-wait_vblank proc
-    push dx
+clear_buffer proc
     push ax
-    mov dx, 03DAh
-wait_vblank_loop1:
-    in al, dx
-    test al, 8
-    jnz wait_vblank_loop1
-wait_vblank_loop2:
-    in al, dx
-    test al, 8
-    jz wait_vblank_loop2
+    push cx
+    push di
+    push es
+    
+    push ds
+    pop es
+    mov di, offset double_buffer
+    mov cx, 32000      ; 64000 bytes / 2 bytes per word
+    xor ax, ax         ; Fill with 0 (Black)
+    rep stosw
+    
+    pop es
+    pop di
+    pop cx
     pop ax
-    pop dx
     ret
-wait_vblank endp
-
-erase_old proc
-    ; Erase Player
-    mov ax, old_px
-    mov rect_x, ax
-    mov ax, old_py
-    mov rect_y, ax
-    mov ax, player_w
-    mov rect_w, ax
-    mov ax, player_h
-    mov rect_h, ax
-    mov rect_c, 0 ; Black
-    call draw_rect
-
-    ; Erase Balloon
-    cmp old_bact, 1
-    jne skip_erase_b
-    mov ax, old_bx
-    mov rect_x, ax
-    mov ax, old_by
-    mov rect_y, ax
-    mov ax, balloon_w
-    mov rect_w, ax
-    mov ax, balloon_h
-    mov rect_h, ax
-    mov rect_c, 0
-    call draw_rect
-skip_erase_b:
-
-    ; Erase Bullet
-    cmp old_bulact, 1
-    jne skip_erase_bul
-    mov ax, old_bulx
-    mov rect_x, ax
-    mov ax, old_buly
-    mov rect_y, ax
-    mov ax, bullet_w
-    mov rect_w, ax
-    mov ax, bullet_h
-    mov rect_h, ax
-    mov rect_c, 0
-    call draw_rect
-skip_erase_bul:
-    ret
-erase_old endp
+clear_buffer endp
 
 draw_new proc
     ; Draw Player
@@ -353,28 +300,6 @@ skip_draw_bul:
     ret
 draw_new endp
 
-save_old proc
-    mov ax, player_x
-    mov old_px, ax
-    mov ax, player_y
-    mov old_py, ax
-
-    mov ax, balloon_x
-    mov old_bx, ax
-    mov ax, balloon_y
-    mov old_by, ax
-    mov al, balloon_act
-    mov old_bact, al
-
-    mov ax, bullet_x
-    mov old_bulx, ax
-    mov ax, bullet_y
-    mov old_buly, ax
-    mov al, bullet_act
-    mov old_bulact, al
-    ret
-save_old endp
-
 draw_rect proc
     push ax
     push bx
@@ -383,8 +308,8 @@ draw_rect proc
     push di
     push es
 
-    mov ax, 0A000h
-    mov es, ax
+    push ds
+    pop es             ; Point ES to our current data segment (where buffer is)
 
     mov cx, rect_h
     mov bx, rect_y
@@ -394,9 +319,11 @@ row_loop:
     
     mov ax, 320
     push dx
-    mul bx      ; DX:AX = AX * BX
+    mul bx             ; DX:AX = AX * BX
     pop dx
     add ax, rect_x
+    
+    add ax, offset double_buffer ; Add offset to offscreen buffer
     mov di, ax
     
     mov al, rect_c
@@ -417,5 +344,49 @@ col_loop:
     pop ax
     ret
 draw_rect endp
+
+blit_screen proc
+    push ax
+    push cx
+    push si
+    push di
+    push ds
+    push es
+
+    mov ax, 0A000h
+    mov es, ax         ; Destination: VGA Video Memory
+    xor di, di
+    
+    mov si, offset double_buffer ; Source: Offscreen Buffer
+    mov cx, 32000      ; 32,000 Words (64,000 Bytes)
+    
+    ; Wait for VSYNC (Hardware Blanking Period)
+    mov dx, 03DAh
+wait_vblank_loop1:
+    in al, dx
+    test al, 8
+    jnz wait_vblank_loop1
+wait_vblank_loop2:
+    in al, dx
+    test al, 8
+    jz wait_vblank_loop2
+    
+    ; Extremely fast memory copy from DS:SI to ES:DI
+    rep movsw
+    
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+blit_screen endp
+
+; --- DOUBLE BUFFER ALLOCATION ---
+; In a .COM file, DOS gives us all available memory in the segment (up to 64KB).
+; By placing this label at the very end of our code, we can safely use the remaining
+; ~64,000 bytes as our offscreen pixel buffer without overwriting our instructions.
+double_buffer equ $
 
 end start
